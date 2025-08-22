@@ -1,0 +1,3 @@
+coffee_predictor_app/
+├── coffee_purchase_predictor.joblib
+└── requirements.txt
