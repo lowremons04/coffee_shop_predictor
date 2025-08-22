@@ -2,117 +2,107 @@
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
+import numpy as np
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Project NextCup - Customer Purchase Predictor",
+    page_title="Coffee Purchase Predictor",
     page_icon="☕",
     layout="wide"
 )
 
-# --- Load the Trained Pipeline ---
-# The pipeline includes the preprocessor, SMOTE (for training), and the final model.
-# We use st.cache_resource to load it only once.
+# --- Caching the Model and Encoder ---
+# Use caching to load the model and encoder only once
 @st.cache_resource
-def load_pipeline():
-    """Load the complete prediction pipeline."""
-    pipeline = joblib.load('coffee_purchase_predictor.joblib')
-    return pipeline
+def load_model_and_encoder():
+    """Load the trained pipeline and label encoder from disk."""
+    try:
+        pipeline = joblib.load('coffee_purchase_predictor.joblib')
+        label_encoder = joblib.load('label_encoder.joblib')
+        return pipeline, label_encoder
+    except FileNotFoundError:
+        st.error("Model or encoder files not found. Make sure 'coffee_purchase_predictor.joblib' and 'label_encoder.joblib' are in the same directory.")
+        return None, None
 
-pipeline = load_pipeline()
+pipeline, label_encoder = load_model_and_encoder()
 
-# Extract feature names from the preprocessor step of the pipeline
-# This makes the app adaptable if you retrain the model with different features
-try:
-    # Accessing transformers in a scikit-learn pipeline
-    feature_names = pipeline.named_steps['preprocessor'].get_feature_names_out()
-    # Let's get the original feature names for the UI
-    original_numerical_features = pipeline.named_steps['preprocessor'].transformers_[0][2]
-    original_categorical_features = pipeline.named_steps['preprocessor'].transformers_[1][2]
-except Exception as e:
-    st.error(f"Could not extract feature names from the pipeline. Error: {e}")
-    # Fallback to a hardcoded list if the above fails
-    original_numerical_features = ['total_visits', 'total_spent', 'total_items', 'days_since_last_visit', 'customer_lifetime_days', 'avg_spent_per_visit', 'avg_items_per_visit', 'count_americano', 'count_americano_with_milk', 'count_cappuccino', 'count_cocoa', 'count_cortado', 'count_espresso', 'count_hot_chocolate', 'count_latte']
-    original_categorical_features = ['most_frequent_store', 'favorite_weekday', 'favorite_time_of_day']
-
-
-# --- App Layout ---
-st.title("☕ Project NextCup")
-st.subheader("Predicting a Customer's Next Purchase Category")
+# --- Application Title and Description ---
+st.title("☕ Next Coffee Purchase Predictor")
 st.markdown("""
-This app uses a machine learning model (XGBoost) to predict what a customer is likely to buy on their next visit.
-Please enter the customer's historical data in the sidebar to get a prediction.
+This app predicts a customer's next coffee purchase based on their historical data. 
+Enter the customer's details in the sidebar to get a prediction.
+This demonstrates a practical application of a machine learning model in a business context.
 """)
 
-st.sidebar.header("Customer Profile Input")
+# --- Sidebar for User Input ---
+st.sidebar.header("Customer Features")
 
-# --- Input Widgets in the Sidebar ---
+# Helper function to create inputs
 def user_input_features():
-    """Create sidebar widgets and return a DataFrame of the inputs."""
-    inputs = {}
+    total_visits = st.sidebar.slider('Total Visits', 1, 100, 10)
+    total_spent = st.sidebar.slider('Total Spent (R)', 50.0, 5000.0, 500.0, step=10.0)
+    days_since_last_visit = st.sidebar.slider('Days Since Last Visit', 0, 365, 30)
+
+    # Derived feature (calculated for convenience, but the model needs it)
+    avg_spent_per_visit = total_spent / total_visits if total_visits > 0 else 0
+    st.sidebar.metric("Average Spent per Visit (R)", f"{avg_spent_per_visit:.2f}")
+
+    favorite_weekday = st.sidebar.selectbox('Favorite Weekday', 
+                                            ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
     
-    st.sidebar.subheader("Visit & Spending Habits")
-    inputs['total_visits'] = st.sidebar.slider("Total Number of Visits", 1, 100, 10)
-    inputs['total_spent'] = st.sidebar.slider("Total Money Spent (in R)", 10, 5000, 500)
-    inputs['days_since_last_visit'] = st.sidebar.slider("Days Since Last Visit", 0, 365, 30)
-
-    st.sidebar.subheader("Behavioral Traits")
-    inputs['most_frequent_store'] = st.sidebar.selectbox("Most Frequented Store Location", ['Hell\'s Kitchen', 'Lower Manhattan', 'Astoria'])
-    inputs['favorite_weekday'] = st.sidebar.selectbox("Most Common Visit Day", ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
-    inputs['favorite_time_of_day'] = st.sidebar.selectbox("Most Common Visit Time", ['Morning', 'Afternoon', 'Night'])
+    favorite_time_of_day = st.sidebar.selectbox('Favorite Time of Day', 
+                                                ['Morning', 'Afternoon', 'Evening'])
     
-    st.sidebar.subheader("Historical Purchase Counts")
-    # Dynamically create sliders for the product categories found during training
-    for feature in original_numerical_features:
-        if 'count_' in feature:
-            # Clean up the name for the UI
-            product_name = feature.replace('count_', '').replace('_', ' ').title()
-            inputs[feature] = st.sidebar.slider(f"Count of '{product_name}'", 0, 50, 5)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Previous Coffee Counts")
+    
+    # Get the coffee types from the label encoder
+    coffee_types = label_encoder.classes_
+    
+    coffee_counts = {}
+    for coffee in coffee_types:
+        # Create a user-friendly name for the input field
+        input_label = f'Count of {coffee}'
+        # Create the column name the model expects (e.g., 'count_cappuccino')
+        col_name = f'count_{coffee.lower().replace(" ", "_")}'
+        coffee_counts[col_name] = st.sidebar.number_input(input_label, min_value=0, max_value=50, value=2)
 
-    # Add any remaining numerical features that weren't in the purchase counts
-    # This makes the app robust to feature changes
-    for feature in original_numerical_features:
-        if feature not in inputs:
-             inputs[feature] = 0 # Default to 0 if not a purchase count
-
-    data = pd.DataFrame([inputs])
-    return data
+    data = {
+        'total_visits': total_visits,
+        'total_spent': total_spent,
+        'days_since_last_visit': days_since_last_visit,
+        'avg_spent_per_visit': avg_spent_per_visit,
+        'favorite_weekday': favorite_weekday,
+        'favorite_time_of_day': favorite_time_of_day,
+        **coffee_counts # Unpack the dictionary of coffee counts
+    }
+    
+    # The order of columns in this DataFrame MUST match the order used during training
+    feature_df = pd.DataFrame(data, index=[0])
+    return feature_df
 
 input_df = user_input_features()
 
-# --- Display User Input ---
-st.write("---")
-st.header("👤 Customer Input Profile")
-st.dataframe(input_df, use_container_width=True)
+# --- Display Input Data ---
+st.subheader("Customer Data Input")
+st.write("The following features will be used for the prediction:")
+st.dataframe(input_df, hide_index=True)
 
-# --- Prediction and Output ---
-if st.button("Predict Next Purchase", type="primary"):
-    
-    # The pipeline handles all preprocessing and prediction in one step
-    prediction = pipeline.predict(input_df)
-    prediction_proba = pipeline.predict_proba(input_df)
-    
-    st.write("---")
-    st.header("📈 Prediction Results")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("Predicted Category:")
-        st.success(f"**{prediction[0]}**")
-        
-    with col2:
-        st.subheader("Prediction Confidence:")
-        # Create a DataFrame for the probabilities
-        proba_df = pd.DataFrame(
-            prediction_proba,
-            columns=pipeline.classes_,
-            index=["Probability"]
-        ).T.sort_values("Probability", ascending=False)
-        
-        st.dataframe(proba_df.style.format("{:.2%}"))
+# --- Prediction Logic ---
+if st.button('Predict Next Purchase', type="primary"):
+    if pipeline is not None and label_encoder is not None:
+        try:
+            # The pipeline handles all preprocessing (scaling, one-hot encoding)
+            prediction_encoded = pipeline.predict(input_df)
+            
+            # Inverse transform the numeric prediction to get the coffee name
+            prediction_label = label_encoder.inverse_transform(prediction_encoded)
+            
+            st.success(f"🎉 The model predicts the customer will buy a **{prediction_label[0]}** next!")
+            st.balloons()
 
-st.markdown("---")
-st.write("Developed by Low Jia Yuan, Abigail Chong Yung Ping, and Nathaniel Woo Shih Yan.")
+        except Exception as e:
+            st.error(f"An error occurred during prediction: {e}")
+    else:
+        st.warning("Model is not loaded. Cannot make a prediction.")
