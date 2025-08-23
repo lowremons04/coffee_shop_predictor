@@ -65,30 +65,53 @@ with tab1:
                                                 ['Morning', 'Afternoon', 'Evening'], key='single_time')
 
         st.subheader("Previous Coffee Counts")
-        coffee_types = label_encoder.classes_ if label_encoder else []
-        coffee_cols = st.columns(len(coffee_types))
-        coffee_counts = {}
+        
+        # Gracefully handle if model is not loaded yet
+        if pipeline is not None and label_encoder is not None:
+            coffee_types = label_encoder.classes_
+            # Dynamically create columns for a neat layout
+            num_columns = min(len(coffee_types), 5) # Max 5 columns per row
+            coffee_cols_rows = [st.columns(num_columns) for _ in range((len(coffee_types) + num_columns - 1) // num_columns)]
+            coffee_counts = {}
 
-        for i, coffee in enumerate(coffee_types):
-            with coffee_cols[i]:
-                input_label = coffee
-                col_name = f'count_{coffee.lower().replace(" ", "_")}'
-                coffee_counts[col_name] = st.number_input(input_label, min_value=0, max_value=50, value=2, key=f'single_{col_name}')
+            # Flatten the list of columns
+            all_cols = [col for row in coffee_cols_rows for col in row]
+
+            for i, coffee in enumerate(coffee_types):
+                with all_cols[i]:
+                    input_label = coffee
+                    col_name = f'count_{coffee.lower().replace(" ", "_")}'
+                    coffee_counts[col_name] = st.number_input(input_label, min_value=0, max_value=50, value=2, key=f'single_{col_name}')
+        else:
+            st.warning("Model not loaded. Cannot display coffee types.")
+            coffee_counts = {}
 
         # Submit button for the form
         submitted = st.form_submit_button("Predict Next Purchase")
         
         if submitted:
             if pipeline is not None and label_encoder is not None:
+                # Get the full list of required columns from the model
+                required_model_cols = pipeline.named_steps['preprocessor'].feature_names_in_
+                
                 data = {
                     'total_visits': total_visits, 'total_spent': total_spent,
                     'days_since_last_visit': days_since_last_visit, 'avg_spent_per_visit': avg_spent_per_visit,
                     'favorite_weekday': favorite_weekday, 'favorite_time_of_day': favorite_time_of_day,
                     **coffee_counts
                 }
-                input_df = pd.DataFrame(data, index=[0])
                 
-                prediction_encoded = pipeline.predict(input_df)
+                input_df = pd.DataFrame(data, index=[0])
+
+                # Add any missing columns that the model expects but were not in the form
+                for col in required_model_cols:
+                    if col not in input_df.columns:
+                        input_df[col] = 0
+                
+                # Ensure the column order is correct
+                input_df_aligned = input_df[required_model_cols]
+                
+                prediction_encoded = pipeline.predict(input_df_aligned)
                 prediction_label = label_encoder.inverse_transform(prediction_encoded)
                 
                 st.success(f"🎉 The model predicts the customer will buy a **{prediction_label[0]}** next!")
@@ -112,26 +135,45 @@ with tab2:
     
     if uploaded_file is not None:
         try:
-            batch_df = pd.read_csv(uploaded_file)
+            batch_df_original = pd.read_csv(uploaded_file)
             st.write("✅ **CSV Uploaded Successfully!** Here's a preview:")
-            st.dataframe(batch_df.head())
+            st.dataframe(batch_df_original.head())
 
-            # Basic validation to check for required columns
-            required_cols = ['total_visits', 'total_spent', 'days_since_last_visit', 'avg_spent_per_visit', 'favorite_weekday', 'favorite_time_of_day']
-            if all(col in batch_df.columns for col in required_cols):
+            # Get the full list of feature names the model was trained on
+            required_model_cols = pipeline.named_steps['preprocessor'].feature_names_in_
+            
+            # Define the essential columns that MUST be in the user's uploaded file
+            core_cols = ['total_visits', 'total_spent', 'days_since_last_visit', 'avg_spent_per_visit', 'favorite_weekday', 'favorite_time_of_day']
+            
+            # Check if all essential columns are present
+            if all(col in batch_df_original.columns for col in core_cols):
                 if st.button("Run Batch Prediction", type="primary"):
-                    with st.spinner("Predicting for all customers..."):
-                        predictions_encoded = pipeline.predict(batch_df)
+                    with st.spinner("Preparing data and predicting..."):
+                        
+                        # --- ROBUSTNESS FIX START ---
+                        # We make a copy to avoid modifying the original DataFrame in memory
+                        batch_df_processed = batch_df_original.copy()
+
+                        # Add any missing product count columns and fill with 0
+                        for col in required_model_cols:
+                            if col not in batch_df_processed.columns:
+                                batch_df_processed[col] = 0
+                        
+                        # Ensure the column order is exactly what the model expects
+                        batch_df_aligned = batch_df_processed[required_model_cols]
+                        # --- ROBUSTNESS FIX END ---
+
+                        predictions_encoded = pipeline.predict(batch_df_aligned)
                         predictions_labels = label_encoder.inverse_transform(predictions_encoded)
                         
-                        results_df = batch_df.copy()
+                        # Add the prediction to the original DataFrame for display
+                        results_df = batch_df_original.copy()
                         results_df['predicted_next_purchase'] = predictions_labels
                         st.session_state.batch_results = results_df # Save to session state
                         
                         st.success("✅ **Batch Prediction Complete!**")
-                        st.write("Results:")
                         st.dataframe(results_df)
-                        
+
                         # Provide a download button for the results
                         st.download_button(
                             label="Download Predictions as CSV",
@@ -140,7 +182,13 @@ with tab2:
                             mime='text/csv',
                         )
             else:
-                st.error(f"❌ **CSV Error:** Your file is missing one or more required columns. Please ensure it contains at least: {required_cols}")
+                # The improved error message
+                st.error("❌ **CSV Error:** Your file is missing one or more essential columns.")
+                st.write("**Essential columns required:**")
+                st.json(core_cols)
+                st.write("**Columns found in your file:**")
+                st.json(batch_df_original.columns.tolist())
+                st.info("Please check your CSV file. The very first line must be the header, and it must contain all the essential column names.")
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
