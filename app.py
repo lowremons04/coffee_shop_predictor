@@ -28,7 +28,6 @@ def load_model_and_encoder():
 pipeline, label_encoder = load_model_and_encoder()
 
 # --- INITIALIZE SESSION STATE ---
-# This is the corrected placement. Initialize state variables at the top.
 if 'batch_results' not in st.session_state:
     st.session_state.batch_results = None
 
@@ -49,7 +48,7 @@ tab1, tab2, tab3 = st.tabs(["👤 Single Customer Prediction", "📈 Batch Forec
 # TAB 1: SINGLE CUSTOMER PREDICTION
 # ==============================================================================
 with tab1:
-    # This tab's code is correct.
+    # This tab's code is correct and remains the same.
     st.header("Predict Next Purchase for a Single Customer")
     
     with st.form("single_customer_form"):
@@ -112,7 +111,7 @@ with tab1:
 # TAB 2: BATCH FORECASTING
 # ==============================================================================
 with tab2:
-    # This tab's code is correct.
+    # This tab's code is correct and remains the same.
     st.header("Batch Forecasting with CSV File")
     st.write("Upload a CSV file with customer data to predict their next purchases.")
     
@@ -138,7 +137,7 @@ with tab2:
                         predictions_labels = label_encoder.inverse_transform(predictions_encoded)
                         results_df = batch_df_original.copy()
                         results_df['predicted_next_purchase'] = predictions_labels
-                        st.session_state.batch_results = results_df # This line now safely updates the initialized state
+                        st.session_state.batch_results = results_df
                         st.success("✅ **Batch Prediction Complete!**")
                         st.dataframe(results_df)
                         st.download_button(
@@ -165,7 +164,6 @@ with tab3:
     st.header("Inventory Demand Forecast & Customer Insights")
     st.write("This tab uses the results from the 'Batch Forecasting' tab to generate insights.")
     
-    # This check will now work safely because st.session_state.batch_results was initialized to None
     if st.session_state.batch_results is not None:
         results_df = st.session_state.batch_results
         
@@ -173,21 +171,39 @@ with tab3:
         
         with col1:
             st.subheader("Predicted Demand Forecast")
+            
+            # --- FEATURE 1: ADD "NEXT 3 MONTHS" OPTION ---
             forecast_period = st.radio(
                 "Select Forecast Period",
-                ("Next Week", "Next Month"),
+                ("Next Week", "Next Month", "Next 3 Months"),
                 horizontal=True
             )
-            multiplier = 4 if forecast_period == "Next Month" else 1
+            
+            if forecast_period == "Next Month":
+                multiplier = 4
+            elif forecast_period == "Next 3 Months":
+                multiplier = 12 # 4 weeks * 3
+            else:
+                multiplier = 1
+
             all_coffee_types = label_encoder.classes_
             predicted_counts = results_df['predicted_next_purchase'].value_counts()
             demand_forecast = pd.Series(0, index=all_coffee_types)
             demand_forecast.update(predicted_counts)
             demand_forecast = (demand_forecast * multiplier).astype(int)
+            
             demand_forecast_df = demand_forecast.reset_index()
             demand_forecast_df.columns = ['Coffee Type', 'Predicted Number of Sales']
+            
             st.write(f"Based on the predicted next purchase for each customer in your file, extrapolated for the {forecast_period.lower()}.")
-            st.bar_chart(demand_forecast_df.set_index('Coffee Type'), color="#FF8C00")
+            
+            # --- FIX 2: SORT PREDICTED DEMAND CHART ---
+            demand_chart = alt.Chart(demand_forecast_df).mark_bar(color='#FF8C00').encode(
+                x=alt.X('Coffee Type', type='nominal', sort='-y'),
+                y=alt.Y('Predicted Number of Sales', type='quantitative'),
+                tooltip=['Coffee Type', 'Predicted Number of Sales']
+            )
+            st.altair_chart(demand_chart, use_container_width=True)
 
         with col2:
             st.subheader("Historical Customer Favorites")
@@ -201,13 +217,13 @@ with tab3:
                 favorites_df = historical_favorites.reset_index()
                 favorites_df.columns = ['Coffee Type', 'Total Historical Purchases']
                 
-                chart = alt.Chart(favorites_df).mark_bar(color='#008080').encode(
+                favorites_chart = alt.Chart(favorites_df).mark_bar(color='#008080').encode(
                     x=alt.X('Coffee Type', type='nominal', sort='-y'),
                     y=alt.Y('Total Historical Purchases', type='quantitative'),
                     tooltip=['Coffee Type', 'Total Historical Purchases']
                 )
                 
-                st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(favorites_chart, use_container_width=True)
 
                 st.write("This chart shows which drinks have been the most popular historically among the customers in your uploaded file.")
             else:
