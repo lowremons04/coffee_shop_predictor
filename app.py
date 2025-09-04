@@ -167,4 +167,49 @@ with tab3:
         
         with col1:
             st.subheader("Predicted Demand Forecast")
-            forecast_period = st
+            forecast_period = st.radio(
+                "Select Forecast Period",
+                ("Next Week", "Next Month"),
+                horizontal=True
+            )
+            multiplier = 4 if forecast_period == "Next Month" else 1
+            all_coffee_types = label_encoder.classes_
+            predicted_counts = results_df['predicted_next_purchase'].value_counts()
+            demand_forecast = pd.Series(0, index=all_coffee_types)
+            demand_forecast.update(predicted_counts)
+            demand_forecast = (demand_forecast * multiplier).astype(int)
+            demand_forecast_df = demand_forecast.reset_index()
+            demand_forecast_df.columns = ['Coffee Type', 'Predicted Number of Sales']
+            st.write(f"Based on the predicted next purchase for each customer in your file, extrapolated for the {forecast_period.lower()}.")
+            st.bar_chart(demand_forecast_df.set_index('Coffee Type'), color="#FF8C00")
+
+        with col2:
+            st.subheader("Historical Customer Favorites")
+            st.write("Based on the total purchase counts from your uploaded file.")
+
+            count_cols = [col for col in results_df.columns if col.startswith('count_')]
+            if count_cols:
+                historical_favorites = results_df[count_cols].sum()
+                historical_favorites.index = [idx.replace('count_', '').replace('_', ' ').title() for idx in historical_favorites.index]
+                
+                favorites_df = historical_favorites.reset_index()
+                favorites_df.columns = ['Coffee Type', 'Total Historical Purchases']
+                
+                # --- THIS IS THE DEFINITIVE FIX USING ALTAIR ---
+                # Create the chart object with Altair
+                chart = alt.Chart(favorites_df).mark_bar(color='#008080').encode(
+                    # THE KEY: Sort the x-axis based on the y-axis values in descending order
+                    x=alt.X('Coffee Type', type='nominal', sort='-y'),
+                    y=alt.Y('Total Historical Purchases', type='quantitative'),
+                    tooltip=['Coffee Type', 'Total Historical Purchases']
+                )
+                
+                # Display the chart using st.altair_chart
+                st.altair_chart(chart, use_container_width=True)
+                # --- END OF FIX ---
+
+                st.write("This chart shows which drinks have been the most popular historically among the customers in your uploaded file.")
+            else:
+                st.warning("Could not find historical purchase count columns (e.g., 'count_latte') in the uploaded file.")
+    else:
+        st.info("ℹ️ Please upload a CSV and run a batch prediction in the **'Batch Forecasting'** tab to see insights here.")
