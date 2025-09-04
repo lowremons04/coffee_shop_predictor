@@ -43,7 +43,7 @@ tab1, tab2, tab3 = st.tabs(["👤 Single Customer Prediction", "📈 Batch Forec
 # TAB 1: SINGLE CUSTOMER PREDICTION
 # ==============================================================================
 with tab1:
-    # This tab's code remains the same as the previous full version
+    # This tab's code is correct and remains the same.
     st.header("Predict Next Purchase for a Single Customer")
     
     with st.form("single_customer_form"):
@@ -109,7 +109,7 @@ if 'batch_results' not in st.session_state:
     st.session_state.batch_results = None
 
 with tab2:
-    # This tab's code remains the same as the previous full version
+    # This tab's code is correct and remains the same.
     st.header("Batch Forecasting with CSV File")
     st.write("Upload a CSV file with customer data to predict their next purchases.")
     
@@ -166,36 +166,21 @@ with tab3:
         
         with col1:
             st.subheader("Predicted Demand Forecast")
-            
-            # --- FEATURE 3: ADD WEEK/MONTH TOGGLE ---
             forecast_period = st.radio(
                 "Select Forecast Period",
                 ("Next Week", "Next Month"),
                 horizontal=True
             )
-            
             multiplier = 4 if forecast_period == "Next Month" else 1
-            chart_title = f"Predicted Demand for {forecast_period}"
-            
-            # --- FIX 1: SHOW ALL COFFEES IN PREDICTION CHART ---
-            # Get all possible coffee types from the encoder
             all_coffee_types = label_encoder.classes_
-            
-            # Count the predictions from the results
             predicted_counts = results_df['predicted_next_purchase'].value_counts()
-            
-            # Create a full demand series, including coffees with 0 predicted sales
             demand_forecast = pd.Series(0, index=all_coffee_types)
             demand_forecast.update(predicted_counts)
-            
-            # Apply the weekly/monthly multiplier
             demand_forecast = (demand_forecast * multiplier).astype(int)
-            
-            demand_forecast = demand_forecast.reset_index()
-            demand_forecast.columns = ['Coffee Type', 'Predicted Number of Sales']
-
+            demand_forecast_df = demand_forecast.reset_index()
+            demand_forecast_df.columns = ['Coffee Type', 'Predicted Number of Sales']
             st.write(f"Based on the predicted next purchase for each customer in your file, extrapolated for the {forecast_period.lower()}.")
-            st.bar_chart(demand_forecast.set_index('Coffee Type'), color="#FF8C00")
+            st.bar_chart(demand_forecast_df.set_index('Coffee Type'), color="#FF8C00")
 
         with col2:
             st.subheader("Historical Customer Favorites")
@@ -206,10 +191,23 @@ with tab3:
                 historical_favorites = results_df[count_cols].sum()
                 historical_favorites.index = [idx.replace('count_', '').replace('_', ' ').title() for idx in historical_favorites.index]
                 
-                # --- FIX 2: SORT HISTORICAL CHART BY VALUE ---
-                historical_favorites = historical_favorites.sort_values(ascending=False)
+                # Sort the Pandas Series by its values
+                historical_favorites_sorted = historical_favorites.sort_values(ascending=False)
                 
-                st.bar_chart(historical_favorites, color="#008080")
+                # --- THIS IS THE CORRECTED CODE BLOCK ---
+                # Convert the sorted Series to a DataFrame to preserve the sort order for plotting
+                favorites_df = historical_favorites_sorted.reset_index()
+                favorites_df.columns = ['Coffee Type', 'Total Historical Purchases']
+                
+                # Plot the DataFrame, specifying x and y axes. This respects the row order.
+                st.bar_chart(
+                    favorites_df,
+                    x='Coffee Type',
+                    y='Total Historical Purchases',
+                    color="#008080"
+                )
+                # --- END OF CORRECTED CODE BLOCK ---
+
                 st.write("This chart shows which drinks have been the most popular historically among the customers in your uploaded file.")
             else:
                 st.warning("Could not find historical purchase count columns (e.g., 'count_latte') in the uploaded file.")
