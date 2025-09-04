@@ -30,14 +30,17 @@ pipeline, label_encoder = load_model_and_encoder()
 # --- INITIALIZE SESSION STATE ---
 if 'batch_results' not in st.session_state:
     st.session_state.batch_results = None
+if 'prob_forecast' not in st.session_state:
+    st.session_state.prob_forecast = None
+
 
 # --- Application Title and Description ---
 st.title("☕ Coffee Shop Business Intelligence Dashboard")
 st.markdown("""
 Welcome to your business dashboard. This tool provides three key functions:
 1.  **Single Customer Prediction:** Predict the top 3 most likely coffee purchases for an individual customer.
-2.  **Batch Forecasting:** Upload a CSV of customer data to predict next purchases for many customers at once.
-3.  **Inventory & Insights:** Get a demand forecast for the upcoming week/month and view historical favorites based on your uploaded data.
+2.  **Batch Forecasting:** Upload a CSV of customer data to predict the top 3 next purchases for many customers at once.
+3.  **Inventory & Insights:** Get a probabilistic demand forecast and view historical favorites based on your uploaded data.
 """)
 
 # --- Create Tabs for different functionalities ---
@@ -45,12 +48,13 @@ tab1, tab2, tab3 = st.tabs(["👤 Single Customer Prediction", "📈 Batch Forec
 
 
 # ==============================================================================
-# TAB 1: SINGLE CUSTOMER PREDICTION (***UPDATED WITH TOP 3 PREDICTIONS***)
+# TAB 1: SINGLE CUSTOMER PREDICTION
 # ==============================================================================
 with tab1:
+    # This tab's logic for Top 3 is already correct.
     st.header("Predict Next Purchase for a Single Customer")
-    
     with st.form("single_customer_form"):
+        # ... (all the input fields remain the same) ...
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Purchase History")
@@ -84,7 +88,6 @@ with tab1:
             coffee_counts = {}
 
         submitted = st.form_submit_button("Predict Next Purchase")
-        
         if submitted:
             if pipeline is not None and label_encoder is not None:
                 required_model_cols = pipeline.named_steps['preprocessor'].feature_names_in_
@@ -100,19 +103,12 @@ with tab1:
                         input_df[col] = 0
                 input_df_aligned = input_df[required_model_cols]
                 
-                # --- NEW LOGIC: GET TOP 3 PREDICTIONS ---
-                # Use .predict_proba() to get probabilities for all classes
                 all_probabilities = pipeline.predict_proba(input_df_aligned)[0]
-                
-                # Get the indices of the top 3 probabilities
                 top_3_indices = np.argsort(all_probabilities)[-3:][::-1]
-                
-                # Get the corresponding class names and probabilities
                 top_3_labels = label_encoder.classes_[top_3_indices]
                 top_3_probs = all_probabilities[top_3_indices]
                 
                 st.subheader("Top 3 Predicted Drinks")
-                
                 cols = st.columns(3)
                 for i in range(3):
                     with cols[i]:
@@ -121,19 +117,14 @@ with tab1:
                             value=top_3_labels[i],
                             delta=f"{top_3_probs[i]:.0%} Probability"
                         )
-                
                 st.balloons()
             else:
                 st.warning("Model is not loaded. Cannot make a prediction.")
 
 
 # ==============================================================================
-# TAB 2 & 3: BATCH FORECASTING & INSIGHTS
+# TAB 2: BATCH FORECASTING (***UPDATED WITH TOP 3 PREDICTIONS***)
 # ==============================================================================
-# The code for these tabs remains the same, as the Top 3 prediction is a feature
-# best suited for single-customer analysis. The batch forecast should still predict
-# the single most likely item for demand aggregation.
-
 with tab2:
     st.header("Batch Forecasting with CSV File")
     st.write("Upload a CSV file with customer data to predict their next purchases.")
@@ -145,6 +136,7 @@ with tab2:
             batch_df_original = pd.read_csv(uploaded_file)
             st.write("✅ **CSV Uploaded Successfully!** Here's a preview:")
             st.dataframe(batch_df_original.head())
+            
             required_model_cols = pipeline.named_steps['preprocessor'].feature_names_in_
             core_cols = ['total_visits', 'total_spent', 'days_since_last_visit', 'avg_spent_per_visit', 'favorite_weekday', 'favorite_time_of_day']
             
@@ -156,11 +148,26 @@ with tab2:
                             if col not in batch_df_processed.columns:
                                 batch_df_processed[col] = 0
                         batch_df_aligned = batch_df_processed[required_model_cols]
-                        predictions_encoded = pipeline.predict(batch_df_aligned)
-                        predictions_labels = label_encoder.inverse_transform(predictions_encoded)
+                        
+                        # --- NEW LOGIC: GET PROBABILITIES FOR ALL CUSTOMERS ---
+                        all_probabilities = pipeline.predict_proba(batch_df_aligned)
+                        
+                        # Get the top 3 predictions for the output CSV
+                        top_3_indices = np.argsort(all_probabilities, axis=1)[:, -3:][:, ::-1]
+                        top_3_labels = label_encoder.classes_[top_3_indices]
+                        
                         results_df = batch_df_original.copy()
-                        results_df['predicted_next_purchase'] = predictions_labels
+                        results_df['prediction_1'] = top_3_labels[:, 0]
+                        results_df['prediction_2'] = top_3_labels[:, 1]
+                        results_df['prediction_3'] = top_3_labels[:, 2]
+                        
+                        # Create the probabilistic forecast for Tab 3
+                        prob_forecast = pd.DataFrame(all_probabilities, columns=label_encoder.classes_)
+                        
+                        # Save both results to session state
                         st.session_state.batch_results = results_df
+                        st.session_state.prob_forecast = prob_forecast
+                        
                         st.success("✅ **Batch Prediction Complete!**")
                         st.dataframe(results_df)
                         st.download_button(
@@ -180,17 +187,22 @@ with tab2:
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
+# ==============================================================================
+# TAB 3: INVENTORY & INSIGHTS (***UPDATED WITH PROBABILISTIC FORECAST***)
+# ==============================================================================
 with tab3:
     st.header("Inventory Demand Forecast & Customer Insights")
     st.write("This tab uses the results from the 'Batch Forecasting' tab to generate insights.")
     
-    if st.session_state.batch_results is not None:
-        results_df = st.session_state.batch_results
+    # Check for the new prob_forecast state
+    if st.session_state.prob_forecast is not None:
+        prob_forecast_df = st.session_state.prob_forecast
+        results_df = st.session_state.batch_results # The original df for historical
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Predicted Demand Forecast")
+            st.subheader("Probabilistic Demand Forecast")
             forecast_period = st.radio(
                 "Select Forecast Period",
                 ("Next Week", "Next Month", "Next 3 Months"),
@@ -200,14 +212,13 @@ with tab3:
             elif forecast_period == "Next 3 Months": multiplier = 12
             else: multiplier = 1
 
-            all_coffee_types = label_encoder.classes_
-            predicted_counts = results_df['predicted_next_purchase'].value_counts()
-            demand_forecast = pd.Series(0, index=all_coffee_types)
-            demand_forecast.update(predicted_counts)
-            demand_forecast = (demand_forecast * multiplier).astype(int)
+            # --- NEW LOGIC: SUM PROBABILITIES FOR DEMAND ---
+            demand_forecast = prob_forecast_df.sum(axis=0) * multiplier
             demand_forecast_df = demand_forecast.reset_index()
             demand_forecast_df.columns = ['Coffee Type', 'Predicted Number of Sales']
-            st.write(f"Based on the predicted next purchase for each customer in your file, extrapolated for the {forecast_period.lower()}.")
+            
+            st.write(f"The total expected number of sales, based on the sum of probabilities for each customer in your file, extrapolated for the {forecast_period.lower()}.")
+            
             demand_chart = alt.Chart(demand_forecast_df).mark_bar(color='#FF8C00').encode(
                 x=alt.X('Coffee Type', type='nominal', sort='-y'),
                 y=alt.Y('Predicted Number of Sales', type='quantitative'),
