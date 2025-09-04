@@ -195,15 +195,17 @@ with tab3:
                 historical_favorites_sorted = historical_favorites.sort_values(ascending=False)
                 
                 # --- THIS IS THE CORRECTED CODE BLOCK ---
-                # Convert the sorted Series to a DataFrame to preserve the sort order for plotting
+                # Convert the sorted Series to a DataFrame to prepare it for plotting
                 favorites_df = historical_favorites_sorted.reset_index()
                 favorites_df.columns = ['Coffee Type', 'Total Historical Purchases']
                 
-                # Plot the DataFrame, specifying x and y axes. This respects the row order.
+                # **THE FIX**: Set the correctly sorted 'Coffee Type' column as the index.
+                favorites_df_for_plotting = favorites_df.set_index('Coffee Type')
+                
+                # Plot the DataFrame directly *without* x and y parameters.
+                # This forces Streamlit to use the index for the x-axis and preserve its order.
                 st.bar_chart(
-                    favorites_df,
-                    x='Coffee Type',
-                    y='Total Historical Purchases',
+                    favorites_df_for_plotting,
                     color="#008080"
                 )
                 # --- END OF CORRECTED CODE BLOCK ---
