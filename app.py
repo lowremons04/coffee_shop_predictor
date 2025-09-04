@@ -35,7 +35,7 @@ if 'batch_results' not in st.session_state:
 st.title("☕ Coffee Shop Business Intelligence Dashboard")
 st.markdown("""
 Welcome to your business dashboard. This tool provides three key functions:
-1.  **Single Customer Prediction:** Predict the next coffee purchase for an individual customer.
+1.  **Single Customer Prediction:** Predict the top 3 most likely coffee purchases for an individual customer.
 2.  **Batch Forecasting:** Upload a CSV of customer data to predict next purchases for many customers at once.
 3.  **Inventory & Insights:** Get a demand forecast for the upcoming week/month and view historical favorites based on your uploaded data.
 """)
@@ -45,10 +45,9 @@ tab1, tab2, tab3 = st.tabs(["👤 Single Customer Prediction", "📈 Batch Forec
 
 
 # ==============================================================================
-# TAB 1: SINGLE CUSTOMER PREDICTION
+# TAB 1: SINGLE CUSTOMER PREDICTION (***UPDATED WITH TOP 3 PREDICTIONS***)
 # ==============================================================================
 with tab1:
-    # This tab's code is correct and remains the same.
     st.header("Predict Next Purchase for a Single Customer")
     
     with st.form("single_customer_form"):
@@ -85,6 +84,7 @@ with tab1:
             coffee_counts = {}
 
         submitted = st.form_submit_button("Predict Next Purchase")
+        
         if submitted:
             if pipeline is not None and label_encoder is not None:
                 required_model_cols = pipeline.named_steps['preprocessor'].feature_names_in_
@@ -99,19 +99,42 @@ with tab1:
                     if col not in input_df.columns:
                         input_df[col] = 0
                 input_df_aligned = input_df[required_model_cols]
-                prediction_encoded = pipeline.predict(input_df_aligned)
-                prediction_label = label_encoder.inverse_transform(prediction_encoded)
-                st.success(f"🎉 The model predicts the customer will buy a **{prediction_label[0]}** next!")
+                
+                # --- NEW LOGIC: GET TOP 3 PREDICTIONS ---
+                # Use .predict_proba() to get probabilities for all classes
+                all_probabilities = pipeline.predict_proba(input_df_aligned)[0]
+                
+                # Get the indices of the top 3 probabilities
+                top_3_indices = np.argsort(all_probabilities)[-3:][::-1]
+                
+                # Get the corresponding class names and probabilities
+                top_3_labels = label_encoder.classes_[top_3_indices]
+                top_3_probs = all_probabilities[top_3_indices]
+                
+                st.subheader("Top 3 Predicted Drinks")
+                
+                cols = st.columns(3)
+                for i in range(3):
+                    with cols[i]:
+                        st.metric(
+                            label=f"Prediction #{i+1}",
+                            value=top_3_labels[i],
+                            delta=f"{top_3_probs[i]:.0%} Probability"
+                        )
+                
                 st.balloons()
             else:
                 st.warning("Model is not loaded. Cannot make a prediction.")
 
 
 # ==============================================================================
-# TAB 2: BATCH FORECASTING
+# TAB 2 & 3: BATCH FORECASTING & INSIGHTS
 # ==============================================================================
+# The code for these tabs remains the same, as the Top 3 prediction is a feature
+# best suited for single-customer analysis. The batch forecast should still predict
+# the single most likely item for demand aggregation.
+
 with tab2:
-    # This tab's code is correct and remains the same.
     st.header("Batch Forecasting with CSV File")
     st.write("Upload a CSV file with customer data to predict their next purchases.")
     
@@ -157,9 +180,6 @@ with tab2:
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
-# ==============================================================================
-# TAB 3: INVENTORY & INSIGHTS
-# ==============================================================================
 with tab3:
     st.header("Inventory Demand Forecast & Customer Insights")
     st.write("This tab uses the results from the 'Batch Forecasting' tab to generate insights.")
@@ -171,33 +191,23 @@ with tab3:
         
         with col1:
             st.subheader("Predicted Demand Forecast")
-            
-            # --- FEATURE 1: ADD "NEXT 3 MONTHS" OPTION ---
             forecast_period = st.radio(
                 "Select Forecast Period",
                 ("Next Week", "Next Month", "Next 3 Months"),
                 horizontal=True
             )
-            
-            if forecast_period == "Next Month":
-                multiplier = 4
-            elif forecast_period == "Next 3 Months":
-                multiplier = 12 # 4 weeks * 3
-            else:
-                multiplier = 1
+            if forecast_period == "Next Month": multiplier = 4
+            elif forecast_period == "Next 3 Months": multiplier = 12
+            else: multiplier = 1
 
             all_coffee_types = label_encoder.classes_
             predicted_counts = results_df['predicted_next_purchase'].value_counts()
             demand_forecast = pd.Series(0, index=all_coffee_types)
             demand_forecast.update(predicted_counts)
             demand_forecast = (demand_forecast * multiplier).astype(int)
-            
             demand_forecast_df = demand_forecast.reset_index()
             demand_forecast_df.columns = ['Coffee Type', 'Predicted Number of Sales']
-            
             st.write(f"Based on the predicted next purchase for each customer in your file, extrapolated for the {forecast_period.lower()}.")
-            
-            # --- FIX 2: SORT PREDICTED DEMAND CHART ---
             demand_chart = alt.Chart(demand_forecast_df).mark_bar(color='#FF8C00').encode(
                 x=alt.X('Coffee Type', type='nominal', sort='-y'),
                 y=alt.Y('Predicted Number of Sales', type='quantitative'),
@@ -208,23 +218,18 @@ with tab3:
         with col2:
             st.subheader("Historical Customer Favorites")
             st.write("Based on the total purchase counts from your uploaded file.")
-
             count_cols = [col for col in results_df.columns if col.startswith('count_')]
             if count_cols:
                 historical_favorites = results_df[count_cols].sum()
                 historical_favorites.index = [idx.replace('count_', '').replace('_', ' ').title() for idx in historical_favorites.index]
-                
                 favorites_df = historical_favorites.reset_index()
                 favorites_df.columns = ['Coffee Type', 'Total Historical Purchases']
-                
                 favorites_chart = alt.Chart(favorites_df).mark_bar(color='#008080').encode(
                     x=alt.X('Coffee Type', type='nominal', sort='-y'),
                     y=alt.Y('Total Historical Purchases', type='quantitative'),
                     tooltip=['Coffee Type', 'Total Historical Purchases']
                 )
-                
                 st.altair_chart(favorites_chart, use_container_width=True)
-
                 st.write("This chart shows which drinks have been the most popular historically among the customers in your uploaded file.")
             else:
                 st.warning("Could not find historical purchase count columns (e.g., 'count_latte') in the uploaded file.")
